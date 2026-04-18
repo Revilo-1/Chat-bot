@@ -38,7 +38,7 @@ COPENHAGEN_TZ = ZoneInfo("Europe/Copenhagen") if ZoneInfo else None
 
 # ── Initalisering ─────────────────────────────────────────────────────────────
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client | None = None
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
@@ -63,10 +63,24 @@ def now_local() -> datetime:
     return datetime.now()
 
 
+def get_supabase_client() -> Client:
+    """Laver Supabase client lazy, så modulet ikke crasher ved import."""
+    global supabase
+    if supabase is not None:
+        return supabase
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_URL eller SUPABASE_KEY mangler i miljøvariabler.")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return supabase
+
+
 def get_chat_session(user_id: int) -> list:
     """Henter chat-session fra Supabase"""
     try:
-        res = supabase.table("chat_sessions").select("messages").eq("user_id", user_id).execute()
+        db = get_supabase_client()
+        res = db.table("chat_sessions").select("messages").eq("user_id", user_id).execute()
         if res.data:
             return res.data[0]["messages"] or []
         return []
@@ -78,7 +92,8 @@ def get_chat_session(user_id: int) -> list:
 def save_chat_session(user_id: int, messages: list):
     """Gemmer chat-session i Supabase"""
     try:
-        supabase.table("chat_sessions").upsert({
+        db = get_supabase_client()
+        db.table("chat_sessions").upsert({
             "user_id": user_id,
             "messages": messages,
             "updated_at": now_local().isoformat()
@@ -284,7 +299,8 @@ def add_task(user_id: int, payload: dict | str) -> str:
         return "⚠️ Ugyldig frist. Brug format YYYY-MM-DD, fx 2026-04-20."
 
     try:
-        supabase.table("tasks").insert({
+        db = get_supabase_client()
+        db.table("tasks").insert({
             "user_id": user_id,
             "text": text,
             "priority": normalize_priority(payload.get("priority")),
@@ -301,7 +317,8 @@ def add_task(user_id: int, payload: dict | str) -> str:
 def list_tasks(user_id: int, status: str = "active") -> str:
     """Viser opgaver fra Supabase."""
     try:
-        res = supabase.table("tasks").select("*").eq("user_id", user_id).execute()
+        db = get_supabase_client()
+        res = db.table("tasks").select("*").eq("user_id", user_id).execute()
         tasks = res.data or []
 
         if status == "active":
@@ -331,12 +348,13 @@ def complete_task(user_id: int, text: str) -> str:
     """Markerer en opgave som færdig."""
     try:
         search = text.strip().lower()
-        res = supabase.table("tasks").select("*").eq("user_id", user_id).eq("done", False).execute()
+        db = get_supabase_client()
+        res = db.table("tasks").select("*").eq("user_id", user_id).eq("done", False).execute()
         tasks = res.data or []
 
         for t in tasks:
             if t["text"].lower() == search or search in t["text"].lower():
-                supabase.table("tasks").update({
+                db.table("tasks").update({
                     "done": True,
                     "completed_at": now_local().isoformat()
                 }).eq("id", t["id"]).execute()
