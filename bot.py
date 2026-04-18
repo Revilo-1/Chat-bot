@@ -21,6 +21,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 import pickle
+import base64
 
 try:
     from zoneinfo import ZoneInfo
@@ -71,20 +72,51 @@ COPENHAGEN_TZ = ZoneInfo("Europe/Copenhagen") if ZoneInfo else None
 
 # ── Google Calendar ────────────────────────────────────────────────────────────
 
+def load_google_token_from_env():
+    raw = os.getenv("GOOGLE_TOKEN_PICKLE_BASE64", "").strip()
+    if not raw:
+        return None
+    try:
+        return pickle.loads(base64.b64decode(raw))
+    except Exception as e:
+        raise RuntimeError("GOOGLE_TOKEN_PICKLE_BASE64 er ugyldig.") from e
+
+
+def get_google_oauth_flow():
+    if os.path.exists("credentials.json"):
+        return InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+
+    raw = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
+    if not raw:
+        raise RuntimeError(
+            "Mangler Google credentials. Tilføj credentials.json eller GOOGLE_CREDENTIALS_JSON."
+        )
+
+    try:
+        client_config = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError("GOOGLE_CREDENTIALS_JSON er ikke gyldig JSON.") from e
+
+    return InstalledAppFlow.from_client_config(client_config, SCOPES)
+
+
 def get_calendar_service():
     creds = None
     if os.path.exists("token.pickle"):
         with open("token.pickle", "rb") as f:
             creds = pickle.load(f)
+    else:
+        creds = load_google_token_from_env()
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            flow = get_google_oauth_flow()
             creds = flow.run_local_server(port=0)
-        with open("token.pickle", "wb") as f:
-            pickle.dump(creds, f)
+        if os.path.exists("token.pickle") or not os.getenv("GOOGLE_TOKEN_PICKLE_BASE64", "").strip():
+            with open("token.pickle", "wb") as f:
+                pickle.dump(creds, f)
 
     return build("calendar", "v3", credentials=creds)
 
