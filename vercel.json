@@ -1,0 +1,10 @@
+{
+  "buildCommand": "pip install -r requirements.txt",
+  "outputDirectory": ".",
+  "framework": "python",
+  "functions": {
+    "api/telegram.py": {
+      "runtime": "python3.9"
+    }
+  }
+}
